@@ -1,10 +1,12 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from uuid import UUID
+from datetime import date, datetime
 
 class UserResponse(BaseModel) :
     id: UUID
-    email: EmailStr
-    name: str
+    username: str
+    birthdate: date
+    created_at: datetime
 
 class PasswordChange(BaseModel) :
     current_password:str

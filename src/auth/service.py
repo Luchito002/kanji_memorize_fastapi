@@ -31,14 +31,14 @@ def get_password_hash(password: str) -> str:
 def authenticate_user(username: str, password: str, db: Session) -> User | None:
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.password_hash):
-        logging.warning(f"Failed authentication attempt for email: {username}")
+        logging.warning(f"Failed authentication attempt for user: {username}")
         return None
     return user
 
 
-def create_access_token(email: str, user_id: UUID, expires_delta: timedelta) -> str:
+def create_access_token(username: str, user_id: UUID, expires_delta: timedelta) -> str:
     encode = {
-        'sub': email,
+        'sub': username,
         'id': str(user_id),
         'exp': datetime.now(timezone.utc) + expires_delta
     }
@@ -74,7 +74,7 @@ def register_user(db: Session, register_user_request: models.RegisterUserRequest
 def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]) -> models.TokenData:
     return verify_token(token)
 
-CurrentUser = Annotated [models. TokenData, Depends(get_current_user) ]
+CurrentUser = Annotated [models.TokenData, Depends(get_current_user) ]
 
 
 def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
