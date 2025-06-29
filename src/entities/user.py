@@ -1,5 +1,5 @@
 from enum import unique
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, DateTime, Date
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, date
@@ -17,5 +17,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
+    settings = relationship("UserSettings", backref="user", uselist=False)
+    progress = relationship("Progress", backref="user")
+    user_stories = relationship("UserStory", backref="user")
+
     def __repr__(self):
-        return f"<User(email='{self.email}', name='{self.name}')>"
+        return f"<User(username='{self.username}', name='{self.name}')>"

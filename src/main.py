@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from src.database.core import engine, Base
-from src.entities.user import User # Import models to register them
+from src.entities import *
 from src.api import register_routes
 from src.logging import configure_logging, LogLevels
 from fastapi.middleware.cors import CORSMiddleware
