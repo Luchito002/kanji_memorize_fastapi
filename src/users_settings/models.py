@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-class UserSettingsByUserIdResponse(BaseModel) :
+class GetUserSettingsResponse(BaseModel) :
     theme: str
     show_kanji_on_home: bool
     daily_kanji_limit: int

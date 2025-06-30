@@ -13,4 +13,3 @@ class UserSettings(Base):
     theme: Mapped[str] = mapped_column(String, default="system")
     show_kanji_on_home: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_kanji_limit: Mapped[int] = mapped_column(Integer, default=10)
-    last_kanji_index: Mapped[int] = mapped_column(Integer, default=0)

@@ -40,3 +40,12 @@ class UserAlreadyExistsError(UserError):
             status_code=409,
             detail=f"User with email '{email}' already exists"
         )
+
+class UserSettingsNotFound(UserError):
+    def __init__(self):
+        super().__init__(status_code=401, detail="User settings not found")
+
+
+class DailyProgressNotFound(UserError):
+    def __init__(self):
+        super().__init__(status_code=404, detail="Daily progress not found")
