@@ -20,7 +20,7 @@ def post_increase_daily_progress(current_user: CurrentUser, db: DbSession):
     return APIResponse(
         result=new_index,
         status="success",
-        message="last_kanji_index actualizado correctamente"
+        message="last_kanji_index updated successfully"
     )
 
 @router.post("/decrease-daily-progress", response_model=APIResponse)
@@ -34,7 +34,21 @@ def post_decrease_daily_progress(current_user: CurrentUser, db: DbSession):
     return APIResponse(
         result=new_index,
         status="success",
-        message="last_kanji_index actualizado correctamente"
+        message="last_kanji_index updated successfully"
+    )
+
+@router.post("/complete-daily-progress", response_model=APIResponse)
+def post_complete_daily_progress(current_user: CurrentUser, db: DbSession):
+    user_id = current_user.get_uuid()
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token or user not found")
+
+    completed = service.post_complete_daily_progress(db, user_id)
+
+    return APIResponse(
+        result=completed,
+        status="success",
+        message="Daily progress completed successfully"
     )
 
 @router.post("/create-today-progress", response_model=APIResponse)

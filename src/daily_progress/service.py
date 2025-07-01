@@ -28,6 +28,7 @@ def post_increase_today_kanji_index(db: Session, user_id: UUID):
     return user_daily_progress.last_kanji_index
 
 
+
 def post_decrease_today_kanji_index(db: Session, user_id: UUID):
     # Get today's daily progress entry
     user_daily_progress = db.query(DailyProgress).filter(
@@ -47,6 +48,28 @@ def post_decrease_today_kanji_index(db: Session, user_id: UUID):
     logging.info(f"Incremented today_kanji_index for user ID: {user_id}")
 
     return user_daily_progress.last_kanji_index
+
+
+def post_complete_daily_progress(db: Session, user_id: UUID):
+    # Get today's daily progress entry
+    user_daily_progress = db.query(DailyProgress).filter(
+        DailyProgress.user_id == user_id,
+        DailyProgress.progress_date == date.today()
+    ).first()
+
+    if not user_daily_progress:
+        logging.warning(f"Daily progress not found for user ID: {user_id}")
+        raise DailyProgressNotFound()
+
+    # Complete the daily progress
+    user_daily_progress.completed = True
+    db.commit()
+    db.refresh(user_daily_progress)
+
+    logging.info(f"Completed daily progress for user ID: {user_id}")
+
+    return user_daily_progress.completed
+
 
 
 def post_create_today_progress(db: Session, user_id: UUID) -> DailyProgressResponse:
@@ -76,7 +99,7 @@ def post_create_today_progress(db: Session, user_id: UUID) -> DailyProgressRespo
             user_id=user_id,
             progress_date=today,
             last_kanji_index=last_index,
-            today_kanji_index=0,
+            today_kanji_index=last_index + 1,
         )
         db.add(progress)
         db.commit()
@@ -86,4 +109,5 @@ def post_create_today_progress(db: Session, user_id: UUID) -> DailyProgressRespo
         last_kanji_index=progress.last_kanji_index,
         today_kanji_index=progress.today_kanji_index,
         end_kanji_index=progress.last_kanji_index + settings.daily_kanji_limit,
+        completed=progress.completed
     )
