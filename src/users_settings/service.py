@@ -1,30 +1,41 @@
 from uuid import UUID
 from sqlalchemy.orm import Session
 
-from src.exceptions import UserSettingsNotFound
-from . import models
+from .models import UserSettingsResponse
 from src.entities.user_settings import UserSettings
 import logging
 
-def get_user_settings_by_user_id(db: Session, user_id: UUID) -> models.GetUserSettingsResponse:
+from src.exceptions import UserSettingsNotFound
+
+def get_current_user_settings(db: Session, user_id: UUID) -> UserSettingsResponse:
     user_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
     if not user_settings:
         logging.warning(f"Settings not found with user ID: {user_id}")
-
-    logging.info(f"Successfully retrieved user with ID: {user_id}")
-    return user_settings
-
-
-def post_last_kanji_index(db: Session, user_id: UUID):
-    user_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
-    if not user_settings:
-        logging.warning(f"Settings not found with user ID: {user_id}")
-
-    if user_settings is None:
         raise UserSettingsNotFound()
 
-    user_settings.last_kanji_index += 1
-    db.commit()
-    db.refresh(user_settings)
     logging.info(f"Successfully retrieved user with ID: {user_id}")
-    return user_settings.last_kanji_index
+    return UserSettingsResponse(
+        theme=user_settings.theme,
+        daily_kanji_limit=user_settings.daily_kanji_limit,
+    )
+
+
+def post_create_settings(db: Session, user_id: UUID) -> UserSettingsResponse:
+    user_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if not user_settings:
+        logging.info(f"No settings found for user ID {user_id}, creating new one.")
+        user_settings = UserSettings(
+            user_id=user_id,
+            theme="system",
+            daily_kanji_limit=10,
+        )
+        db.add(user_settings)
+        db.commit()
+        db.refresh(user_settings)
+    else:
+        logging.info(f"Settings already exist for user ID {user_id}, returning existing settings.")
+
+    return UserSettingsResponse(
+        theme=user_settings.theme,
+        daily_kanji_limit=user_settings.daily_kanji_limit,
+    )

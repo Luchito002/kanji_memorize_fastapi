@@ -55,7 +55,7 @@ def verify_token(token: str) -> models.TokenData:
         raise AuthenticationError()
 
 
-def register_user(db: Session, register_user_request: models.RegisterUserRequest) -> None:
+def register_user(db: Session, register_user_request: models.RegisterUserRequest) -> models.Token:
     try:
         create_user_model = User(
             id=uuid4(),
@@ -66,6 +66,14 @@ def register_user(db: Session, register_user_request: models.RegisterUserRequest
 
         db.add(create_user_model)
         db.commit()
+
+        access_token = create_access_token(
+            username=create_user_model.username,
+            user_id=create_user_model.id,
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+
+        return models.Token(access_token=access_token, token_type='bearer')
 
     except Exception as e:
         logging.error(f"Failed to register user: {register_user_request.username}. Error: {str(e)}")
