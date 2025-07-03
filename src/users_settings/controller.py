@@ -40,3 +40,17 @@ def post_create_settings(current_user: CurrentUser, db: DbSession):
         status="success",
         message="New settings created successfully"
     )
+
+@router.put("/edit-settings", response_model=APIResponse)
+def put_edit_settings(current_user: CurrentUser, db:DbSession, new_settings: models.UserEditSettingsRequest):
+    user_id = current_user.get_uuid()
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token or user not found")
+
+    updated_settings = service.put_edit_settings(db, user_id, new_settings)
+
+    return APIResponse (
+        result=updated_settings,
+        status="success",
+        message="New settings updated successfully"
+    )

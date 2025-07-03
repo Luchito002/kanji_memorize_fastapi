@@ -1,7 +1,7 @@
 from uuid import UUID
 from sqlalchemy.orm import Session
 
-from .models import UserSettingsResponse
+from .models import UserEditSettingsRequest, UserSettingsResponse
 from src.entities.user_settings import UserSettings
 import logging
 
@@ -34,6 +34,27 @@ def post_create_settings(db: Session, user_id: UUID) -> UserSettingsResponse:
         db.refresh(user_settings)
     else:
         logging.info(f"Settings already exist for user ID {user_id}, returning existing settings.")
+
+    return UserSettingsResponse(
+        theme=user_settings.theme,
+        daily_kanji_limit=user_settings.daily_kanji_limit,
+    )
+
+def put_edit_settings(db: Session, user_id: UUID, newSettings:UserEditSettingsRequest) -> UserSettingsResponse:
+    user_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
+    if not user_settings:
+        logging.warning(f"Settings not found with user ID: {user_id}")
+        raise UserSettingsNotFound()
+
+    logging.info(f"Successfully retrieved user with ID: {user_id}")
+
+    if newSettings.theme is not None:
+        user_settings.theme = newSettings.theme
+    if newSettings.daily_kanji_limit is not None:
+        user_settings.daily_kanji_limit = newSettings.daily_kanji_limit
+
+    db.commit()
+    db.refresh(user_settings)
 
     return UserSettingsResponse(
         theme=user_settings.theme,
