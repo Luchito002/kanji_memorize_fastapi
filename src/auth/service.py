@@ -1,11 +1,12 @@
 from datetime import timedelta, datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 from passlib.context import CryptContext
 import jwt
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
+from starlette.types import Message
 from src.entities.user import User
 from . import models
 from fastapi. security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
@@ -56,28 +57,31 @@ def verify_token(token: str) -> models.TokenData:
 
 
 def register_user(db: Session, register_user_request: models.RegisterUserRequest) -> models.Token:
-    try:
-        create_user_model = User(
-            id=uuid4(),
-            username=register_user_request.username,
-            birthdate=register_user_request.birthdate,
-            password_hash=get_password_hash(register_user_request.password)
+    existing_user = db.query(User).filter(User.username == register_user_request.username).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already exists"
         )
 
-        db.add(create_user_model)
-        db.commit()
+    new_user = User(
+        id=uuid4(),
+        username=register_user_request.username,
+        birthdate=register_user_request.birthdate,
+        password_hash=get_password_hash(register_user_request.password)
+    )
 
-        access_token = create_access_token(
-            username=create_user_model.username,
-            user_id=create_user_model.id,
-            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        )
+    db.add(new_user)
+    db.commit()
 
-        return models.Token(access_token=access_token, token_type='bearer')
+    access_token = create_access_token(
+        username=new_user.username,
+        user_id=new_user.id,
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
 
-    except Exception as e:
-        logging.error(f"Failed to register user: {register_user_request.username}. Error: {str(e)}")
-        raise
+    return models.Token(access_token=access_token, token_type="bearer")
+
 
 def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]) -> models.TokenData:
     return verify_token(token)
@@ -89,6 +93,6 @@ def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depen
                                  db: Session) -> models.Token:
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
-        raise AuthenticationError()
+        raise AuthenticationError(message="Nombre de usuario o contraseña incorrecta")
     token = create_access_token(user.username, user.id, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     return models.Token(access_token=token, token_type='bearer')
