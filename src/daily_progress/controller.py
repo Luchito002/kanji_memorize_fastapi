@@ -3,6 +3,7 @@ from src.api_response import APIResponse
 from src.database.core import DbSession
 from . import service
 from ..auth.service import CurrentUser
+from .models import IncreaseEndKanjiIndexRequest
 
 router = APIRouter(
     prefix="/dailyprogress",
@@ -58,6 +59,20 @@ def post_create_progress(current_user: CurrentUser, db: DbSession):
         raise HTTPException(status_code=401, detail="Invalid token or user not found")
 
     result = service.post_create_today_progress(db, user_id)
+
+    return APIResponse(
+        result=result,
+        status="success",
+        message="request completed successfully"
+    )
+
+@router.put("/increase-end-kanji-index", response_model=APIResponse)
+def put_increase_end_kanji_index(current_user: CurrentUser, db: DbSession, payload: IncreaseEndKanjiIndexRequest):
+    user_id = current_user.get_uuid()
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token or user not found")
+
+    result = service.put_increase_end_kanji_index(db, user_id, payload.increment)
 
     return APIResponse(
         result=result,
