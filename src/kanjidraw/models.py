@@ -21,5 +21,5 @@ class StrokeInput(BaseModel):
 class StrokeValidationResult(BaseModel):
     ok: bool
     message: str
-    corrected: List[int]
+    corrected: List[List[int]]
     done: bool
