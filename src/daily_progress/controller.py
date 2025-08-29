@@ -3,7 +3,7 @@ from src.api_response import APIResponse
 from src.database.core import DbSession
 from . import service
 from ..auth.service import CurrentUser
-from .models import IncreaseEndKanjiIndexRequest
+from .models import IncreaseEndKanjiIndexRequest, KanjiCharRequest
 
 router = APIRouter(
     prefix="/dailyprogress",
@@ -11,12 +11,12 @@ router = APIRouter(
 )
 
 @router.post("/increase-daily-progress", response_model=APIResponse)
-def post_increase_daily_progress(current_user: CurrentUser, db: DbSession):
+def post_increase_daily_progress(payload: KanjiCharRequest, current_user: CurrentUser, db: DbSession):
     user_id = current_user.get_uuid()
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid token or user not found")
 
-    new_index = service.post_increase_today_kanji_index(db, user_id)
+    new_index = service.post_increase_today_kanji_index(db, user_id, payload.kanji_char)
 
     return APIResponse(
         result=new_index,
@@ -25,12 +25,12 @@ def post_increase_daily_progress(current_user: CurrentUser, db: DbSession):
     )
 
 @router.post("/decrease-daily-progress", response_model=APIResponse)
-def post_decrease_daily_progress(current_user: CurrentUser, db: DbSession):
+def post_decrease_daily_progress(payload: KanjiCharRequest, current_user: CurrentUser, db: DbSession):
     user_id = current_user.get_uuid()
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid token or user not found")
 
-    new_index = service.post_decrease_today_kanji_index(db, user_id)
+    new_index = service.post_decrease_today_kanji_index(db, user_id, payload.kanji_char)
 
     return APIResponse(
         result=new_index,

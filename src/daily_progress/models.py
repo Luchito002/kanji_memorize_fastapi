@@ -8,3 +8,6 @@ class DailyProgressResponse(BaseModel):
 
 class IncreaseEndKanjiIndexRequest(BaseModel):
     increment: int
+
+class KanjiCharRequest(BaseModel):
+    kanji_char: str

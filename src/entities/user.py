@@ -18,7 +18,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     settings = relationship("UserSettings", backref="user", uselist=False)
-    progress = relationship("Progress", backref="user")
+    progress = relationship("SRS", backref="user")
     user_stories = relationship("UserStory", backref="user")
 
     def __repr__(self):

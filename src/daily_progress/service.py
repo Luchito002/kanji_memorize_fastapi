@@ -1,12 +1,14 @@
 from uuid import UUID
 from sqlalchemy.orm import Session
 from src.entities.daily_progress import DailyProgress
+from src.entities.srs import SRS
 from src.entities.user_settings import UserSettings
 from src.exceptions import DailyProgressNotFound
+from src.srs.srsstatus import SRSStatus
 from .models import DailyProgressResponse
 from datetime import date
 
-def post_increase_today_kanji_index(db: Session, user_id: UUID):
+def post_increase_today_kanji_index(db: Session, user_id: UUID, kanji_char: str):
     progress = db.query(DailyProgress).filter(
         DailyProgress.user_id == user_id,
         DailyProgress.progress_date == date.today()
@@ -18,13 +20,39 @@ def post_increase_today_kanji_index(db: Session, user_id: UUID):
     current_kanji = progress.start_kanji_index + progress.today_kanji_index
 
     if current_kanji < progress.end_kanji_index:
+        # Verificar si ya existe ese SRS
+        existing_srs = db.query(SRS).filter(
+            SRS.user_id == user_id,
+            SRS.kanji_char == kanji_char
+        ).first()
+
+        if not existing_srs:
+            # Agregar nuevo SRS solo si no existe
+            new_srs = SRS(
+                user_id=user_id,
+                kanji_char=kanji_char,
+                status=SRSStatus.learning,
+                ease_factor=2.5,
+                interval=1,
+                repetition=0,
+                lapses=0,
+                last_reviewed_at=None,
+                next_review_at=None,
+                last_grade=None,
+                last_review_duration=None
+            )
+            db.add(new_srs)
+
+        # Incrementar el índice aunque el kanji ya exista
         progress.today_kanji_index += 1
+
         db.commit()
         db.refresh(progress)
 
     return current_kanji + 1
 
-def post_decrease_today_kanji_index(db: Session, user_id: UUID):
+
+def post_decrease_today_kanji_index(db: Session, user_id: UUID, kanji_char: str):
     progress = db.query(DailyProgress).filter(
         DailyProgress.user_id == user_id,
         DailyProgress.progress_date == date.today()
@@ -34,7 +62,18 @@ def post_decrease_today_kanji_index(db: Session, user_id: UUID):
         raise DailyProgressNotFound()
 
     if progress.today_kanji_index > 0:
+        # Eliminar el registro SRS
+        srs_entry = db.query(SRS).filter(
+            SRS.user_id == user_id,
+            SRS.kanji_char == kanji_char
+        ).first()
+
+        if srs_entry:
+            db.delete(srs_entry)
+
+        # Decrementar el índice
         progress.today_kanji_index -= 1
+
         db.commit()
         db.refresh(progress)
 

@@ -49,3 +49,7 @@ class UserSettingsNotFound(UserError):
 class DailyProgressNotFound(UserError):
     def __init__(self):
         super().__init__(status_code=404, detail="Daily progress not found")
+
+class UserPreferencesAlreadyExist(UserError):
+    def __init__(self):
+        super().__init__(status_code=404, detail="User preference already exists")

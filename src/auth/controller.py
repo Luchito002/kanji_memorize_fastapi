@@ -1,5 +1,5 @@
-from typing import Annotated
-from fastapi import APIRouter, Depends, Request
+from typing import Annotated, List
+from fastapi import APIRouter, Depends, Request, HTTPException
 from starlette import status
 
 from src.api_response import APIResponse
@@ -23,3 +23,25 @@ async def register_user(request: Request,db: DbSession,register_user_request: mo
 @router.post("/login", response_model=models.Token)
 async def login_for_access_token(form_data: Annotated [OAuth2PasswordRequestForm, Depends()], db: DbSession) :
     return service.login_for_access_token(form_data, db)
+
+@router.post("/user-preferences", response_model=APIResponse)
+def post_user_preferences(
+    preferences: list[models.UserPreferenceItem],  # Recibimos lista directamente
+    current_user: service.CurrentUser,
+    db: DbSession
+):
+    user_id = current_user.get_uuid()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token or user not found")
+
+    # Convertimos cada item a dict
+    prefs_dicts = [pref.dict() for pref in preferences]
+
+    # Llamamos al service batch
+    results = service.create_or_update_user_preferences_batch(db, user_id, prefs_dicts)
+
+    return APIResponse(
+        result=results,
+        status="success",
+        message="User preferences saved successfully"
+    )

@@ -1,6 +1,7 @@
+from typing import List
 from uuid import UUID
 from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
 
 class RegisterUserRequest(BaseModel) :
     username: str
@@ -18,3 +19,15 @@ class TokenData(BaseModel):
         if self.user_id:
             return UUID(self.user_id)
         return None
+
+
+class UserPreferenceItem(BaseModel):
+    question_id: int
+    selected_options: list[str]
+
+class UserPreferencesResponse(BaseModel):
+    question_id: int
+    selected_options: List[str]
+
+    class Config:
+        orm_mode = True

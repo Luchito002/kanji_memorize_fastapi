@@ -1,5 +1,5 @@
 from datetime import timedelta, datetime, timezone
-from typing import Annotated
+from typing import Annotated, List
 from uuid import UUID, uuid4
 from fastapi import Depends, HTTPException, status
 from passlib.context import CryptContext
@@ -12,6 +12,9 @@ from . import models
 from fastapi. security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from ..exceptions import AuthenticationError
 import logging
+from ..entities import UserPreferences
+from .models import UserPreferencesResponse
+from ..exceptions import UserNotFoundError, UserPreferencesAlreadyExist
 
 # You would want to store this in an environment variable or a secret manager
 SECRET_KEY = '197b2c37c391bed93fe80344fe73b806947a65e36206e05a1a23c2fa12702fe3'
@@ -96,3 +99,37 @@ def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depen
         raise AuthenticationError(message="Nombre de usuario o contraseña incorrecta")
     token = create_access_token(user.username, user.id, timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     return models.Token(access_token=token, token_type='bearer')
+
+
+def create_or_update_user_preferences_batch(db: Session, user_id: UUID, preferences: list[dict]):
+    results = []
+
+    for pref in preferences:
+        question_id = pref["question_id"]
+        selected_options = pref["selected_options"]
+
+        existing = db.query(UserPreferences).filter(
+            UserPreferences.user_id == user_id,
+            UserPreferences.question_id == question_id
+        ).first()
+
+        if existing:
+            existing.selected_options = selected_options
+            existing.updated_at = datetime.now()
+        else:
+            existing = UserPreferences(
+                user_id=user_id,
+                question_id=question_id,
+                selected_options=selected_options
+            )
+            db.add(existing)
+
+        db.commit()
+        db.refresh(existing)
+
+        results.append({
+            "question_id": existing.question_id,
+            "selected_options": existing.selected_options
+        })
+
+    return results

@@ -5,6 +5,7 @@ from src.users.controller import router as users_router
 from src.users_settings.controller import router as users_settings_router
 from src.daily_progress.controller import router as daily_progess_router
 from src.kanjidraw.controller import router as kanji_matches_router
+from src.srs.controller import router as srs_router
 
 def register_routes(app: FastAPI) :
     app.include_router(auth_router)
@@ -12,6 +13,7 @@ def register_routes(app: FastAPI) :
     app.include_router(users_settings_router)
     app.include_router(daily_progess_router)
     app.include_router(kanji_matches_router)
+    app.include_router(srs_router)
 
 def register_middlewares(app: FastAPI):
     origins = [

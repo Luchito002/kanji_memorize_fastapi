@@ -21,6 +21,7 @@ def get_current_user_settings(db: Session, user_id: UUID) -> UserSettingsRespons
     return UserSettingsResponse(
         theme=user_settings.theme,
         daily_kanji_limit=user_settings.daily_kanji_limit,
+        daily_srs_limit=user_settings.daily_srs_limit,
     )
 
 
@@ -32,6 +33,7 @@ def post_create_settings(db: Session, user_id: UUID) -> UserSettingsResponse:
             user_id=user_id,
             theme="system",
             daily_kanji_limit=10,
+            daily_srs_limit=10,
         )
         db.add(user_settings)
         db.commit()
@@ -42,9 +44,10 @@ def post_create_settings(db: Session, user_id: UUID) -> UserSettingsResponse:
     return UserSettingsResponse(
         theme=user_settings.theme,
         daily_kanji_limit=user_settings.daily_kanji_limit,
+        daily_srs_limit=user_settings.daily_srs_limit,
     )
 
-def put_edit_settings(db: Session, user_id: UUID, newSettings:UserEditSettingsRequest) -> UserSettingsResponse:
+def put_edit_settings(db: Session, user_id: UUID, newSettings: UserEditSettingsRequest) -> UserSettingsResponse:
     user_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
     if not user_settings:
         logging.warning(f"Settings not found with user ID: {user_id}")
@@ -54,8 +57,18 @@ def put_edit_settings(db: Session, user_id: UUID, newSettings:UserEditSettingsRe
 
     if newSettings.theme is not None:
         user_settings.theme = newSettings.theme
+
     if newSettings.daily_kanji_limit is not None:
         user_settings.daily_kanji_limit = newSettings.daily_kanji_limit
+
+    if newSettings.daily_srs_limit is not None:
+        user_settings.daily_srs_limit = newSettings.daily_srs_limit
+
+        kanji_limit = (
+            newSettings.daily_kanji_limit
+            if newSettings.daily_kanji_limit is not None
+            else user_settings.daily_kanji_limit
+        )
 
         today_progress = db.query(DailyProgress).filter(
             DailyProgress.user_id == user_id,
@@ -63,15 +76,11 @@ def put_edit_settings(db: Session, user_id: UUID, newSettings:UserEditSettingsRe
         ).first()
 
         if today_progress:
-            today_progress.end_kanji_index = today_progress.start_kanji_index + newSettings.daily_kanji_limit
+            today_progress.end_kanji_index = today_progress.start_kanji_index + kanji_limit
             today_progress.completed = False
-            logging.info(f"Updated today_kanji_index to {newSettings.daily_kanji_limit} for user ID: {user_id}")
+            logging.info(f"Updated today_kanji_index to {kanji_limit} for user ID: {user_id}")
         else:
             logging.warning(f"No daily_progress record found for today for user ID: {user_id}")
-
-
-    print(user_settings.theme)
-    print(user_settings.daily_kanji_limit)
 
     db.commit()
     db.refresh(user_settings)
@@ -79,4 +88,5 @@ def put_edit_settings(db: Session, user_id: UUID, newSettings:UserEditSettingsRe
     return UserSettingsResponse(
         theme=user_settings.theme,
         daily_kanji_limit=user_settings.daily_kanji_limit,
+        daily_srs_limit=user_settings.daily_srs_limit
     )

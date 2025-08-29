@@ -12,3 +12,4 @@ class UserSettings(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, unique=True)
     theme: Mapped[str] = mapped_column(String, default="system")
     daily_kanji_limit: Mapped[int] = mapped_column(Integer, default=10)
+    daily_srs_limit: Mapped[int]= mapped_column(Integer, default=10)
