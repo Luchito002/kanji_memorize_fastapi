@@ -37,3 +37,18 @@ def validate_stroke(current_user: CurrentUser, db: DbSession, body: StrokeInput)
         status="success",
         message="Top kanji matches"
     )
+
+
+@router.post("/validate-stroke", response_model=APIResponse[StrokeValidationResult])
+def validate_stroke(current_user: CurrentUser, db: DbSession, body: StrokeInput):
+    user_id = current_user.get_uuid()
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    result = service.validate_stroke_logic(body)
+
+    return APIResponse(
+        result=result,
+        status="success",
+        message="Top kanji matches"
+    )

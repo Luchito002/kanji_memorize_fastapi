@@ -1,20 +1,20 @@
-from datetime import timedelta, datetime, timezone
-from typing import Annotated, List
-from uuid import UUID, uuid4
-from fastapi import Depends, HTTPException, status
-from passlib.context import CryptContext
-import jwt
-from jwt import PyJWTError
-from sqlalchemy.orm import Session
-from starlette.types import Message
-from src.entities.user import User
-from . import models
-from fastapi. security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
-from ..exceptions import AuthenticationError
 import logging
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
+from uuid import UUID, uuid4
+
+import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi. security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jwt import PyJWTError
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+
+from src.entities.user import User
+
 from ..entities import UserPreferences
-from .models import UserPreferencesResponse
-from ..exceptions import UserNotFoundError, UserPreferencesAlreadyExist
+from ..exceptions import AuthenticationError
+from . import models
 
 # You would want to store this in an environment variable or a secret manager
 SECRET_KEY = '197b2c37c391bed93fe80344fe73b806947a65e36206e05a1a23c2fa12702fe3'
@@ -71,8 +71,12 @@ def register_user(db: Session, register_user_request: models.RegisterUserRequest
         id=uuid4(),
         username=register_user_request.username,
         birthdate=register_user_request.birthdate,
-        password_hash=get_password_hash(register_user_request.password)
+        password_hash=get_password_hash(register_user_request.password),
+        timezone=register_user_request.timezone,
+        rol="user",
     )
+
+    print(register_user_request.timezone)
 
     db.add(new_user)
     db.commit()

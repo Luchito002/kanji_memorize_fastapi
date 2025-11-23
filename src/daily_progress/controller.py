@@ -3,7 +3,7 @@ from src.api_response import APIResponse
 from src.database.core import DbSession
 from . import service
 from ..auth.service import CurrentUser
-from .models import IncreaseEndKanjiIndexRequest, KanjiCharRequest
+from .models import IncreaseEndKanjiIndexRequest, Kanji, KanjiCharRequest
 
 router = APIRouter(
     prefix="/dailyprogress",
@@ -79,3 +79,18 @@ def put_increase_end_kanji_index(current_user: CurrentUser, db: DbSession, paylo
         status="success",
         message="request completed successfully"
     )
+
+@router.get("/get-last-kanji-viewed", response_model=APIResponse[Kanji])
+def get_last_kanji_viewed(current_user:CurrentUser, db:DbSession):
+    user_id = current_user.get_uuid()
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token or user not found")
+
+    result = service.get_last_kanji_viewed(db, user_id)
+
+    return APIResponse(
+        result=result,
+        status="success",
+        message="request completed successfully"
+    )
+

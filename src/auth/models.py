@@ -1,12 +1,13 @@
 from typing import List
 from uuid import UUID
 from pydantic import BaseModel
-from datetime import date, datetime
+from datetime import date
 
 class RegisterUserRequest(BaseModel) :
     username: str
     password: str
     birthdate: date
+    timezone: str
 
 class Token (BaseModel) :
     access_token: str

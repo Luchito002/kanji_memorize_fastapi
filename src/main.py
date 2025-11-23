@@ -7,7 +7,6 @@ from src.logging import configure_logging, LogLevels
 
 configure_logging(LogLevels.info)
 
-print("✅ Starting FastAPI app...")
 app = FastAPI()
 
 """

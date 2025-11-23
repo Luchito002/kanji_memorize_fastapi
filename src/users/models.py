@@ -6,6 +6,7 @@ class UserResponse(BaseModel) :
     username: str
     birthdate: date
     created_at: datetime
+    rol: str
 
 class PasswordChange(BaseModel) :
     current_password:str

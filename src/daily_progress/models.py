@@ -1,3 +1,4 @@
+from typing import List, Optional
 from pydantic import BaseModel
 
 class DailyProgressResponse(BaseModel):
@@ -11,3 +12,21 @@ class IncreaseEndKanjiIndexRequest(BaseModel):
 
 class KanjiCharRequest(BaseModel):
     kanji_char: str
+
+class Radical(BaseModel):
+    char: str
+    meaning: str
+
+class Kanji(BaseModel):
+    position: int
+    character: str
+    radicals: List[Radical]
+    meaning: str
+    story: str
+    jlpt: str
+    strokeOrder: str
+    easyRemember: str
+    examples: Optional[List[str]] = None
+    kanjiEasyRemember: Optional[str] = None
+    radicalExplanation: Optional[str] = None
+    radicalExplanationMeanings: Optional[List[Radical]] = None
