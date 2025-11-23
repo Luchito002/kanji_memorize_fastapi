@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import IntEnum
 from typing import Optional, Tuple, Dict, Any
@@ -222,21 +222,3 @@ class Scheduler:
         )
 
         return updated, log
-
-
-# If executed directly, run a small self-check
-if __name__ == "__main__":
-    # example using America/La_Paz timezone (replace with user's timezone string)
-    user_zone = ZoneInfo("America/La_Paz")
-    s = Scheduler(user_tz=user_zone)
-    c = Card(card_id=1)
-    print("Before:", asdict(c))
-    for r in (Rating.Good, Rating.Hard, Rating.Again, Rating.Easy):
-        updated, log = s.review_card(c, r, review_datetime=datetime.now(user_zone))
-        # safely compute seconds until due only when both datetimes are present
-        if updated.due is not None and updated.last_review is not None:
-            secs = (updated.due - updated.last_review).total_seconds()
-            print("Rating:", r, "-> due in seconds:", secs)
-        else:
-            print("Rating:", r, "-> due or last_review missing")
-        c = updated

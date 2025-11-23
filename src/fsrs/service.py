@@ -1,11 +1,15 @@
 from typing import Any, Optional
 from uuid import UUID
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from fsrs import Card, Rating, State, Scheduler
+# ----------------------------------------
+# FSRS: usamos el scheduler que trabaja en la TZ del usuario
+# ----------------------------------------
+from .fsrs import Card as FsrsCard, Rating, State, Scheduler
+from zoneinfo import ZoneInfo
 
 from src.entities.daily_fsrs_progress import DailyFSRSProgress
 from src.entities.user_settings import UserSettings
@@ -21,6 +25,7 @@ from ..entities.review_log import ReviewLog as ReviewLogDB
 
 from copy import deepcopy
 
+
 def create_card(db: Session, user_id: UUID, kanji_char: str) -> CardDB:
     existing_card = db.query(CardDB).filter(
         CardDB.user_id == user_id, CardDB.kanji_char == kanji_char
@@ -31,23 +36,22 @@ def create_card(db: Session, user_id: UUID, kanji_char: str) -> CardDB:
             detail=f"Card for kanji '{kanji_char}' already exists for this user.",
         )
 
-    fsrs_card = Card()
-
+    # Obtener timezone del usuario y hora local
     user_timezone = get_user_timezone(db, user_id)
-    now = to_user_timezone(datetime.now(), user_timezone)
-    print("create_card timezone:", now.tzinfo)
+    now_local = to_user_timezone(datetime.now(), user_timezone)
+    print("create_card timezone:", now_local.tzinfo)
 
+    # Dejamos que la DB asigne el id (autoincrement).
     card = CardDB(
-        id=fsrs_card.card_id,
         user_id=user_id,
         kanji_char=kanji_char,
-        state=fsrs_card.state,
-        step=fsrs_card.step,
-        stability=fsrs_card.stability,
-        difficulty=fsrs_card.difficulty,
-        due=fsrs_card.due,
-        last_review=fsrs_card.last_review,
-        created_at=now,
+        state=int(State.Learning),
+        step=0,
+        stability=None,
+        difficulty=None,
+        due=None,
+        last_review=None,
+        created_at=now_local,
     )
 
     db.add(card)
@@ -80,28 +84,13 @@ def _normalize_state(value: Any) -> Optional[State]:
         return None
 
 
-def _ensure_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """Return dt as timezone-aware UTC datetime, or None if dt is None."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        # assume stored as UTC naive -> mark as UTC
-        return dt.replace(tzinfo=timezone.utc)
-    # already tz-aware -> convert to UTC
-    return dt.astimezone(timezone.utc)
-
-
 def get_card_intervals(db: Session, card_id: int, user_id: UUID) -> CardWithIntervalsResponse:
-    # Obtener timezone del usuario
+    # Obtener timezone del usuario (string, p. ej. "America/La_Paz")
     user_timezone = get_user_timezone(db, user_id)
 
-    # Fecha/hora actual en timezone del usuario
+    # Hora local del usuario
     user_now = to_user_timezone(datetime.now(), user_timezone)
     print("get_card_intervals user timezone:", user_now.tzinfo)
-
-    # Convertir a UTC para FSRS
-    now_utc = user_now.astimezone(timezone.utc)
-    print("get_card_intervals UTC:", now_utc.tzinfo)
 
     # Obtener card de la DB
     card_db: Optional[CardDB] = db.query(CardDB).filter(CardDB.id == card_id).first()
@@ -111,33 +100,39 @@ def get_card_intervals(db: Session, card_id: int, user_id: UUID) -> CardWithInte
     # Normalizar state
     state_norm = _normalize_state(getattr(card_db, "state", None)) or State.Learning
 
-    # Construir FSRS Card base (no modifica la DB)
-    fsrs_card_base = Card(
+    # Construir FSRS Card base (NO modifica la DB)
+    # Convertir due/last_review a tz del usuario sólo si existen
+    due_local: Optional[datetime] = (
+        to_user_timezone(card_db.due, user_timezone) if card_db.due is not None else user_now
+    )
+    last_review_local: Optional[datetime] = (
+        to_user_timezone(card_db.last_review, user_timezone) if card_db.last_review is not None else None
+    )
+
+    fsrs_card_base = FsrsCard(
         card_id=int(card_db.id),
         state=state_norm,
         step=card_db.step,
         stability=card_db.stability,
         difficulty=card_db.difficulty,
-        due=_ensure_aware_utc(card_db.due) or now_utc,  # aseguramos que due nunca sea None
-        last_review=_ensure_aware_utc(card_db.last_review),
+        due=due_local,
+        last_review=last_review_local,
     )
 
-    # Scheduler determinista
-    scheduler = Scheduler(enable_fuzzing=False)
+    # Scheduler determinista creado con la zona del usuario
+    scheduler = Scheduler(user_tz=ZoneInfo(user_timezone), enable_fuzzing=False)
 
-    # Función para simular intervalos según rating
+    # Función para simular intervalos según rating (usando hora local del usuario)
     def _sim_interval_for(rating: Rating) -> str:
-        # Crear copia para que no se modifique fsrs_card_base
         simulated_card, _ = scheduler.review_card(
             card=deepcopy(fsrs_card_base),
             rating=rating,
-            review_datetime=now_utc,
+            review_datetime=user_now,
             review_duration=None,
         )
-        due_dt = simulated_card.due or (now_utc + timedelta(seconds=1))
-        if due_dt.tzinfo is None:
-            due_dt = due_dt.replace(tzinfo=timezone.utc)
-        delta_seconds = int((due_dt - now_utc).total_seconds())
+        due_dt = simulated_card.due or (user_now + timedelta(seconds=1))
+        # Ambos en tz del usuario -> resta segura
+        delta_seconds = int((due_dt - user_now).total_seconds())
         return _format_span_es(delta_seconds)
 
     intervals = {
@@ -148,6 +143,7 @@ def get_card_intervals(db: Session, card_id: int, user_id: UUID) -> CardWithInte
     }
 
     return CardWithIntervalsResponse(**intervals)
+
 
 def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
     # --- 1) Obtener timezone del usuario ---
@@ -169,43 +165,55 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
 
     state_norm = _normalize_state(getattr(card_db, "state", None)) or State.Learning
 
-    # --- 4) Construir objeto FSRS Card ---
-    now_utc = datetime.now(timezone.utc)
-    fsrs_card = Card(
+    # --- 4) Construir objeto FSRS Card en la TZ del usuario ---
+    user_now = to_user_timezone(datetime.now(), user_timezone)
+
+    due_local = (
+        to_user_timezone(card_db.due, user_timezone) if card_db.due is not None else (user_now + timedelta(seconds=1))
+    )
+    last_review_local = (
+        to_user_timezone(card_db.last_review, user_timezone) if card_db.last_review is not None else user_now
+    )
+
+    fsrs_card = FsrsCard(
         card_id=int(card_db.id),
         state=state_norm,
         step=card_db.step,
         stability=card_db.stability,
         difficulty=card_db.difficulty,
-        due=_ensure_aware_utc(card_db.due) or (now_utc + timedelta(seconds=1)),  # nunca None
-        last_review=_ensure_aware_utc(card_db.last_review) or now_utc,
+        due=due_local,
+        last_review=last_review_local,
     )
 
-    # --- 5) Scheduler determinista ---
-    scheduler = Scheduler(enable_fuzzing=False)
+    # --- 5) Scheduler determinista en la tz del usuario ---
+    scheduler = Scheduler(user_tz=ZoneInfo(user_timezone), enable_fuzzing=False)
 
     # --- 6) Fecha/hora de review en timezone del usuario ---
     review_dt = to_user_timezone(datetime.now(), user_timezone)
     print("post_review_card timezone:", review_dt.tzinfo)
 
-    # --- 7) Aplicar la review ---
+    # --- 7) Aplicar la review (todo en tz del usuario) ---
     updated_fsrs_card, fsrs_review_log = scheduler.review_card(
         card=fsrs_card,
         rating=rating,
-        review_datetime=review_dt.astimezone(timezone.utc),  # UTC obligado
+        review_datetime=review_dt,
         review_duration=None,
     )
 
     # --- 8) Extraer datos de FSRS review_log ---
     fsrs_dict = fsrs_review_log.to_dict()
-    review_dt_from_fsrs = (
-        datetime.fromisoformat(fsrs_dict.get("review_datetime")).replace(tzinfo=timezone.utc)
-        if fsrs_dict.get("review_datetime")
-        else review_dt.astimezone(timezone.utc)
-    )
+    rd_str = fsrs_dict.get("review_datetime")
+    if isinstance(rd_str, str) and rd_str:
+        review_dt_from_fsrs_local = datetime.fromisoformat(rd_str)
+        # si la fecha no contiene tzinfo, lo marcamos como tz del usuario
+        if review_dt_from_fsrs_local.tzinfo is None:
+            review_dt_from_fsrs_local = review_dt_from_fsrs_local.replace(tzinfo=ZoneInfo(user_timezone))
+    else:
+        review_dt_from_fsrs_local = review_dt
+
     review_duration_from_fsrs = fsrs_dict.get("review_duration", None)
 
-    # --- 9) Actualizar card en DB ---
+    # --- 9) Actualizar card en DB (guardando datetimes en la tz del usuario) ---
     card_db.state = int(updated_fsrs_card.state)
     card_db.step = updated_fsrs_card.step
     card_db.stability = updated_fsrs_card.stability
@@ -216,27 +224,36 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
     db.add(card_db)
     db.flush()
 
-    # --- 10) Crear review_log ---
+    # --- 10) Crear review_log (guardamos review_datetime en tz del usuario) ---
     review_log_db = ReviewLogDB(
         card_id=int(card_db.id),
         user_id=user_id,
         rating=int(request.rating),
-        review_datetime=review_dt_from_fsrs,
+        review_datetime=review_dt_from_fsrs_local,
         review_duration=review_duration_from_fsrs,
-        write_time_sec=request.write_time_sec,
-        stroke_errors=request.stroke_errors,
+        write_time_sec=getattr(request, "write_time_sec", None),
+        stroke_errors=getattr(request, "stroke_errors", None),
     )
     db.add(review_log_db)
 
     # --- 11) Mover o reordenar en DailyFSRSProgress ---
+    # all datetimes here are in user timezone
     due_dt = updated_fsrs_card.due or (review_dt + timedelta(seconds=1))
-    delta_seconds = (due_dt - review_dt).total_seconds()
+
+    # Sólo resta si ambos son datetimes (en tz del usuario)
+    if due_dt is None:
+        delta_seconds = float("inf")
+    else:
+        delta_seconds = (due_dt - review_dt).total_seconds()
+
     progress_date = review_dt.date()
 
     daily_progress = (
         db.query(DailyFSRSProgress)
-        .filter(DailyFSRSProgress.user_id == user_id,
-                DailyFSRSProgress.progress_date == progress_date)
+        .filter(
+            DailyFSRSProgress.user_id == user_id,
+            DailyFSRSProgress.progress_date == progress_date,
+        )
         .first()
     )
     card_id_int = int(card_db.id)
@@ -254,10 +271,9 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
 
         # CASO B: intervalo <= 1 día -> reordenar todays_cards según due
         else:
-            id_to_due = {}
             cards_db = db.query(CardDB).filter(CardDB.id.in_(todays_cards)).all()
             id_to_dbcard = {c.id: c for c in cards_db}
-            now = review_dt
+            now_local = review_dt
 
             def seconds_until_due(cid: int) -> float:
                 if cid == card_id_int:
@@ -267,7 +283,7 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
                     due_for_this = db_card.due if db_card else None
                 if due_for_this is None:
                     return float("inf")
-                return (due_for_this - now).total_seconds()
+                return (due_for_this - now_local).total_seconds()
 
             todays_cards = sorted(todays_cards, key=seconds_until_due)
 
@@ -282,6 +298,7 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
 
     # --- 12) Commit final ---
     db.commit()
+
 
 def get_today_cards(db: Session, user_id: UUID) -> TodayCardsResponse:
     # Obtener timezone del usuario
@@ -310,33 +327,39 @@ def get_today_cards(db: Session, user_id: UUID) -> TodayCardsResponse:
 
         # Traer todas las cartas del usuario
         cards = db.query(CardDB).filter(CardDB.user_id == user_id).all()
-        scheduler = Scheduler(enable_fuzzing=False)
 
-        # Hora UTC para FSRS
-        now_utc = user_now.astimezone(timezone.utc)
+        # Scheduler en la zona del usuario
+        scheduler = Scheduler(user_tz=ZoneInfo(user_timezone), enable_fuzzing=False)
 
-        # Mapear a FSRS Card y asignar State correcto
-        fsrs_cards: list[Card] = []
+        # Hora local del usuario (usar user_now ya calculado arriba)
+        now_local = user_now
+
+        # Mapear a FSRS Card y asignar State correcto (debemos pasar due en tz del usuario)
+        fsrs_cards: list[FsrsCard] = []
         for c in cards:
             state = State(c.state) if c.state is not None else State.Learning
+            due_local_c = to_user_timezone(c.due, user_timezone) if c.due is not None else None
+            last_review_local_c = to_user_timezone(c.last_review, user_timezone) if c.last_review is not None else None
+
             fsrs_cards.append(
-                Card(
+                FsrsCard(
                     card_id=c.id,
                     state=state,
                     step=c.step,
                     stability=c.stability,
                     difficulty=c.difficulty,
-                    due=c.due,
+                    due=due_local_c,
+                    last_review=last_review_local_c,
                 )
             )
 
-        # Calcular prioridad según tiempo hasta due (UTC)
-        def seconds_until_due(card: Card) -> float:
+        # Calcular prioridad según tiempo hasta due (en la tz del usuario)
+        def seconds_until_due(card: FsrsCard) -> float:
             simulated_card, _ = scheduler.review_card(
-                card=card, rating=Rating.Good, review_datetime=now_utc
+                card=card, rating=Rating.Good, review_datetime=now_local
             )
-            due_dt = simulated_card.due or now_utc
-            return (due_dt - now_utc).total_seconds()
+            due_dt = simulated_card.due or now_local
+            return (due_dt - now_local).total_seconds()
 
         # Ordenar por más urgente
         fsrs_cards_sorted = sorted(fsrs_cards, key=seconds_until_due)

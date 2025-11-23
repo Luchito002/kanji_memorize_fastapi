@@ -8,7 +8,7 @@ from src.entities.card import Card
 from src.entities.daily_progress import DailyProgress
 from src.entities.review_log import ReviewLog
 from src.entities.daily_fsrs_progress import DailyFSRSProgress
-from fsrs import Rating
+from src.fsrs.fsrs import Rating
 
 def get_kanji_progress_pie(db: Session, user_id: UUID) -> PieChartResponse:
     # Obtener el último registro de progreso del usuario
