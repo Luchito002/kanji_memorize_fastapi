@@ -11,10 +11,18 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from src.entities.user import User
+from src.user_timezone import to_user_timezone
 
 from ..entities import UserPreferences
 from ..exceptions import AuthenticationError
 from . import models
+import os
+import json
+from src.fsrs.fsrs import State
+from src.entities.card import Card as CardDB
+
+
+KANJI_FILE = os.path.join(os.path.dirname(__file__), "../kanjis_convertidos_normalizado.json")
 
 # You would want to store this in an environment variable or a secret manager
 SECRET_KEY = '197b2c37c391bed93fe80344fe73b806947a65e36206e05a1a23c2fa12702fe3'
@@ -60,6 +68,7 @@ def verify_token(token: str) -> models.TokenData:
 
 
 def register_user(db: Session, register_user_request: models.RegisterUserRequest) -> models.Token:
+    # 1) comprobación de username existente
     existing_user = db.query(User).filter(User.username == register_user_request.username).first()
     if existing_user:
         raise HTTPException(
@@ -67,6 +76,7 @@ def register_user(db: Session, register_user_request: models.RegisterUserRequest
             detail="Username already exists"
         )
 
+    # 2) crear usuario (id con uuid4(), así podemos usarlo sin hacer commit ahora)
     new_user = User(
         id=uuid4(),
         username=register_user_request.username,
@@ -76,11 +86,61 @@ def register_user(db: Session, register_user_request: models.RegisterUserRequest
         rol="user",
     )
 
-    print(register_user_request.timezone)
-
+    # No hacemos commit todavía — lo haremos al final en una sola transacción.
     db.add(new_user)
-    db.commit()
 
+    # 3) cargar kanjis desde JSON y seleccionar hasta 200 (aquí: primeros 200 por position)
+    try:
+        with open(KANJI_FILE, "r", encoding="utf-8") as f:
+            kanji_list = json.load(f)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error reading kanji file: {e}")
+
+    # Ordenamos por 'position' si existe, y extraemos 'character'
+    def _position_key(item):
+        try:
+            return int(item.get("position", 10**9))
+        except Exception:
+            return 10**9
+
+    sorted_kanjis = sorted(kanji_list, key=_position_key)
+    kanji_chars = [item.get("character") for item in sorted_kanjis if item.get("character")]
+
+    # Tomamos hasta 200 — sin usar random.sample para evitar avisos de tipos
+    selected_chars = kanji_chars[:50]
+
+    # 4) crear cards en memoria asociadas al new_user.id
+    now_local = to_user_timezone(datetime.now(), register_user_request.timezone or new_user.timezone)
+
+    cards_to_add = []
+    for ch in selected_chars:
+        card = CardDB(
+            user_id=new_user.id,
+            kanji_char=ch,
+            state=int(State.Learning),
+            step=0,
+            stability=None,
+            difficulty=None,
+            due=None,
+            last_review=None,
+            created_at=now_local,
+        )
+        cards_to_add.append(card)
+        db.add(card)
+
+    # 5) commit único (usuario + cards)
+    try:
+        db.commit()
+        # optional: refresh if necesitas los ids generados
+        # db.refresh(new_user)
+        # for c in cards_to_add:
+        #     db.refresh(c)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating user/cards: {e}")
+
+    # 6) crear token y devolverlo
     access_token = create_access_token(
         username=new_user.username,
         user_id=new_user.id,
@@ -88,7 +148,6 @@ def register_user(db: Session, register_user_request: models.RegisterUserRequest
     )
 
     return models.Token(access_token=access_token, token_type="bearer")
-
 
 def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]) -> models.TokenData:
     return verify_token(token)
