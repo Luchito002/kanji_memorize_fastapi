@@ -27,6 +27,7 @@ def register_middlewares(app: FastAPI):
     origins = [
         "http://localhost",
         "http://localhost:5173",
+        "https://kanji-memorize.vercel.app"
     ]
     app.add_middleware(
         CORSMiddleware,
