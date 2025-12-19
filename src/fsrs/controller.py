@@ -55,3 +55,13 @@ def get_today_cards(current_user: CurrentUser, db: DbSession):
 
     result = service.get_today_cards(db, user_id)
     return APIResponse(result=result)
+
+
+@router.post("/increment-kanji-count", response_model=APIResponse[models.TodayCardsResponse])
+def increment_kanji_count(current_user: CurrentUser, db: DbSession, request: models.IncrementKanjiCountRequest):
+    user_id = current_user.get_uuid()
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token or user not found")
+
+    result = service.increase_daily_kanji(db, user_id, request.increment)
+    return APIResponse(result=result)

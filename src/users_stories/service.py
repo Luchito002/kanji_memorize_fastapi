@@ -17,57 +17,66 @@ def get_random_option(options: list[str]) -> str | None:
     return random.choice(options) if options else None
 
 def generate_story(story: UserGenerateStoryRequest, db: Session, user_id: UUID) -> UserGenerateStoryResponse:
-    user_settings = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
-    if not user_settings:
+    # Obtener preferencias del usuario
+    user_preferences = (
+        db.query(UserPreferences)
+        .filter(UserPreferences.user_id == user_id)
+        .all()
+    )
+
+    if not user_preferences:
         logging.warning(f"User without preferences: {user_id}")
         raise UserSettingsNotFound()
 
-    prefs = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).all()
+    # Helper para obtener opciones por question_id
+    def get_options(qid: int) -> list[str]:
+        return next(
+            (p.selected_options for p in user_preferences if p.question_id == qid),
+            []
+        )
 
-    topic_options = next((p.selected_options for p in prefs if p.question_id == "1"), [])
-    situation_options = next((p.selected_options for p in prefs if p.question_id == "3"), [])
-    gender_options = next((p.selected_options for p in prefs if p.question_id == "4"), [])
+    # IDs reales según tu tabla de user_preferences_questions
+    topic_options = get_options(1)
+    situation_options = get_options(3)
+    gender_options = get_options(4)
 
     topic = get_random_option(topic_options)
     situation = get_random_option(situation_options)
     gender = get_random_option(gender_options)
 
     MODEL_API_TOKEN = os.getenv("MODEL_API_TOKEN")
-    radicals_text = ', '.join([f"{r.char} ({r.meaning})" for r in story.radicals]) if story.radicals else "desconocidos"
+
+    radicals_text = (
+        ', '.join([f"{r.char} ({r.meaning})" for r in story.radicals])
+        if story.radicals else
+        "desconocidos"
+    )
+
+    payload = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {
+                "role": "user",
+                "content": f"""
+                    Crea una historia mnemotécnica corta, creativa y fácil de recordar para ayudar a memorizar el kanji {story.kanji_char}, que está formado por los componentes {radicals_text}.
+                    Integra elementos de {topic}, {situation} y {gender}, ya que al usuario le gustan esos temas.
+                    Debes resaltar el radical e inmediatamente despues del radical poner su caracter.
+                    No debes utilizar ni un solo icono.
+                    No debes utilizar otro kanji o radicales que no sean correspondientes al kanji {story.kanji_char}
+                    Y como respuesta solo pasa la historia. NO pases absolutamente nada mas que no sea la historia.
+                """
+            }
+        ]
+    }
+
     response = requests.post(
         url="https://openrouter.ai/api/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {MODEL_API_TOKEN}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json"
         },
-        data=json.dumps({
-            "model": "gpt-3.5-turbo",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"""
-                        Crea una historia mnemotécnica corta, creativa y fácil de recordar para ayudar a memorizar el kanji {story.kanji_char}, que está formado por los componentes {radicals_text}.
-                        Adáptala al estilo del método Heisig: debe ser una historia visual y muy concreta, no una explicación lógica.
-                        Integra elementos de {topic}, {situation} y {gender}, ya que al usuario le gustan esos temas.
-                        Debes resaltar el radical e inmediatamente despues del radical poner su caracter.
-                        No debes utilizar ni un solo icono.
-                        No debes utilizar otro kanji o radicales que no sean correspondientes al kanji {story.kanji_char}
-                        Y como respuesta solo pasa la historia. NO pases absolutamente nada mas que no sea la historia.
-                    """
-                }
-            ]
-        })
+        data=json.dumps(payload)
     )
-
-    print(f"""
-                        Crea una historia mnemotécnica corta, creativa y fácil de recordar para ayudar a memorizar el kanji {story.kanji_char}, que está formado por los componentes {radicals_text}.
-                        Adáptala al estilo del método Heisig: debe ser una historia visual y muy concreta, no una explicación lógica.
-                        Integra elementos de {topic}, {situation} y {gender}, ya que al usuario le gustan esos temas.
-                        Debes resaltar el radical e inmediatamente despues del radical poner su caracter.
-                        No debes utilizar ni un solo icono.
-                        No debes utilizar otro kanji o radicales que no sean correspondientes al kanji {story.kanji_char}
-                        Y como respuesta solo pasa la historia. NO pases absolutamente nada mas que no sea la historia.
-                    """)
 
     if response.status_code != 200:
         logging.error(f"OpenRouter error {response.status_code}: {response.text}")
@@ -87,7 +96,7 @@ def generate_story(story: UserGenerateStoryRequest, db: Session, user_id: UUID) 
         db.refresh(new_story)
 
     return UserGenerateStoryResponse(
-        story = generated_story
+        story=generated_story
     )
 
 def get_user_story(kanji_char: UserGetStoryRequest, db: Session, user_id: UUID) -> UserGetStoryResponse:

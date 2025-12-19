@@ -75,3 +75,6 @@ class CardTodayResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+class IncrementKanjiCountRequest(BaseModel):
+    increment:int

@@ -5,9 +5,6 @@ from datetime import datetime, timedelta
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-# ----------------------------------------
-# FSRS: usamos el scheduler que trabaja en la TZ del usuario
-# ----------------------------------------
 from .fsrs import Card as FsrsCard, Rating, State, Scheduler
 from zoneinfo import ZoneInfo
 
@@ -39,7 +36,6 @@ def create_card(db: Session, user_id: UUID, kanji_char: str) -> CardDB:
     # Obtener timezone del usuario y hora local
     user_timezone = get_user_timezone(db, user_id)
     now_local = to_user_timezone(datetime.now(), user_timezone)
-    print("create_card timezone:", now_local.tzinfo)
 
     # Dejamos que la DB asigne el id (autoincrement).
     card = CardDB(
@@ -90,7 +86,6 @@ def get_card_intervals(db: Session, card_id: int, user_id: UUID) -> CardWithInte
 
     # Hora local del usuario
     user_now = to_user_timezone(datetime.now(), user_timezone)
-    print("get_card_intervals user timezone:", user_now.tzinfo)
 
     # Obtener card de la DB
     card_db: Optional[CardDB] = db.query(CardDB).filter(CardDB.id == card_id).first()
@@ -190,7 +185,6 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
 
     # --- 6) Fecha/hora de review en timezone del usuario ---
     review_dt = to_user_timezone(datetime.now(), user_timezone)
-    print("post_review_card timezone:", review_dt.tzinfo)
 
     # --- 7) Aplicar la review (todo en tz del usuario) ---
     updated_fsrs_card, fsrs_review_log = scheduler.review_card(
@@ -205,7 +199,6 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
     rd_str = fsrs_dict.get("review_datetime")
     if isinstance(rd_str, str) and rd_str:
         review_dt_from_fsrs_local = datetime.fromisoformat(rd_str)
-        # si la fecha no contiene tzinfo, lo marcamos como tz del usuario
         if review_dt_from_fsrs_local.tzinfo is None:
             review_dt_from_fsrs_local = review_dt_from_fsrs_local.replace(tzinfo=ZoneInfo(user_timezone))
     else:
@@ -237,15 +230,8 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
     db.add(review_log_db)
 
     # --- 11) Mover o reordenar en DailyFSRSProgress ---
-    # all datetimes here are in user timezone
     due_dt = updated_fsrs_card.due or (review_dt + timedelta(seconds=1))
-
-    # Sólo resta si ambos son datetimes (en tz del usuario)
-    if due_dt is None:
-        delta_seconds = float("inf")
-    else:
-        delta_seconds = (due_dt - review_dt).total_seconds()
-
+    delta_seconds = float("inf") if due_dt is None else (due_dt - review_dt).total_seconds()
     progress_date = review_dt.date()
 
     daily_progress = (
@@ -259,38 +245,95 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
     card_id_int = int(card_db.id)
 
     if daily_progress:
-        todays_cards = list(daily_progress.todays_cards or [])
-        reviewed_cards = list(daily_progress.reviewed_cards or [])
+        # --- Normalizar listas y eliminar None ---
+        raw_todays = list(daily_progress.todays_cards or [])
+        raw_reviewed = list(daily_progress.reviewed_cards or [])
 
-        # CASO A: intervalo > 1 día -> mover a reviewed_cards
-        if delta_seconds >= 86400:
-            if card_id_int in todays_cards:
+        def to_int_list(xs):
+            out = []
+            for x in xs:
+                try:
+                    if x is None:
+                        continue
+                    out.append(int(x))
+                except Exception:
+                    continue
+            # dedupe preserving order
+            return list(dict.fromkeys(out))
+
+        todays_cards = to_int_list(raw_todays)
+        reviewed_cards = to_int_list(raw_reviewed)
+
+        # --- Garantía importante: reviewed_cards nunca debe estar en todays_cards ---
+        set_reviewed = set(reviewed_cards)
+        todays_cards = [x for x in todays_cards if x not in set_reviewed]
+
+        # --- Operar SOLO sobre card_id_int; no tocar otros elementos salvo reordenarlos ---
+        # If the card is in todays_cards -> handle movement or reorder
+        if card_id_int in todays_cards:
+            # if it was the only one, move to reviewed regardless of interval
+            if len(todays_cards) == 1:
                 todays_cards.remove(card_id_int)
-            if card_id_int not in reviewed_cards:
-                reviewed_cards.append(card_id_int)
-
-        # CASO B: intervalo <= 1 día -> reordenar todays_cards según due
-        else:
-            cards_db = db.query(CardDB).filter(CardDB.id.in_(todays_cards)).all()
-            id_to_dbcard = {c.id: c for c in cards_db}
-            now_local = review_dt
-
-            def seconds_until_due(cid: int) -> float:
-                if cid == card_id_int:
-                    due_for_this = updated_fsrs_card.due
+                if card_id_int not in reviewed_cards:
+                    reviewed_cards.append(card_id_int)
+            else:
+                # long interval -> move to reviewed (unchanged behavior)
+                if delta_seconds >= 86400:
+                    todays_cards.remove(card_id_int)
+                    if card_id_int not in reviewed_cards:
+                        reviewed_cards.append(card_id_int)
                 else:
-                    db_card = id_to_dbcard.get(cid)
-                    due_for_this = db_card.due if db_card else None
-                if due_for_this is None:
-                    return float("inf")
-                return (due_for_this - now_local).total_seconds()
+                    # short interval -> move this card to the end of todays_cards
+                    # (do NOT touch other ids, never inject reviewed ids)
+                    try:
+                        # remove the id preserving others' order, then append at end
+                        todays_cards = [x for x in todays_cards if x != card_id_int]
+                        todays_cards.append(card_id_int)
+                    except Exception:
+                        # defensive fallback: if something unexpected happens don't raise
+                        # keep existing order
+                        pass
+        else:
+            # If the card wasn't in todays_cards:
+            # - If it is already in reviewed_cards, do nothing (never move it back).
+            # - If it's neither in todays nor reviewed, we do not add it to todays here.
+            if card_id_int in reviewed_cards:
+                pass
+            else:
+                # Card wasn't scheduled for today — decide policy:
+                # If the interval is long, it makes sense to mark it reviewed for today history.
+                if delta_seconds >= 86400:
+                    if card_id_int not in reviewed_cards:
+                        reviewed_cards.append(card_id_int)
+                # else: leave lists unchanged
 
-            todays_cards = sorted(todays_cards, key=seconds_until_due)
+                # IMPORTANT: never add arbitrary ids into todays_cards here.
 
+        # --- Final limpieza: asegurar invariantess ---
+        # 1) no duplicates
+        todays_cards = [x for x in dict.fromkeys(todays_cards)]
+        reviewed_cards = [x for x in dict.fromkeys(reviewed_cards)]
+        # 2) ensure disjointness
+        set_reviewed = set(reviewed_cards)
+        todays_cards = [x for x in todays_cards if x not in set_reviewed]
+
+        # --- Recalcular contadores de forma consistente ---
+        reviewed_count = len(reviewed_cards)
+        computed_kanji_count = len(todays_cards) + len(reviewed_cards)
+        existing_kanji_count = daily_progress.kanji_count or 0
+        # keep the larger to avoid accidentally shrinking the target mid-day
+        kanji_count = max(existing_kanji_count, computed_kanji_count)
+
+        # cap reviewed_count if it's larger than kanji_count (defensive)
+        if reviewed_count > kanji_count:
+            reviewed_count = kanji_count
+
+
+        # --- Aplicar y persistir ---
         daily_progress.todays_cards = todays_cards
         daily_progress.reviewed_cards = reviewed_cards
-        daily_progress.reviewed_count = len(reviewed_cards)
-        daily_progress.kanji_count = daily_progress.kanji_count or (len(todays_cards) + len(reviewed_cards))
+        daily_progress.reviewed_count = reviewed_count
+        daily_progress.kanji_count = kanji_count
         daily_progress.completed = daily_progress.reviewed_count >= daily_progress.kanji_count
 
         db.add(daily_progress)
@@ -298,7 +341,6 @@ def post_review_card(db: Session, user_id: UUID, request: Any) -> None:
 
     # --- 12) Commit final ---
     db.commit()
-
 
 def get_today_cards(db: Session, user_id: UUID) -> TodayCardsResponse:
     # Obtener timezone del usuario
@@ -320,8 +362,8 @@ def get_today_cards(db: Session, user_id: UUID) -> TodayCardsResponse:
         .first()
     )
 
-    # 2️⃣ Crear progreso diario si no existe o está vacío
-    if not daily_progress or not daily_progress.todays_cards:
+    # 2️⃣ Crear progreso diario si no existe o está *None* (NO si está vacío list)
+    if not daily_progress or daily_progress.todays_cards is None:
         settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
         srs_limit = settings.daily_srs_limit if settings else 10
 
@@ -368,7 +410,8 @@ def get_today_cards(db: Session, user_id: UUID) -> TodayCardsResponse:
         selected_cards = fsrs_cards_sorted[:srs_limit]
         today_card_ids: list[int] = [card.card_id for card in selected_cards]
 
-        # Si ya existía uno vacío, actualízalo; si no, crea uno nuevo
+        # Si ya existía uno vacío (daily_progress) que tenía todays_cards == None, actualízalo;
+        # si no, crea uno nuevo
         if daily_progress:
             daily_progress.kanji_count = len(today_card_ids)
             daily_progress.todays_cards = today_card_ids
@@ -388,22 +431,154 @@ def get_today_cards(db: Session, user_id: UUID) -> TodayCardsResponse:
         db.commit()
         db.refresh(daily_progress)
 
-    # 3️⃣ Recuperar cartas de la DB según IDs
-    cards_db = db.query(CardDB).filter(CardDB.id.in_(daily_progress.todays_cards)).all()
+    # 3️⃣ Recuperar cartas de la DB según IDs — PRESERVANDO EL ORDEN ALMACENADO EN daily_progress
+    todays_ids = list(daily_progress.todays_cards or [])
+    reviewed_ids = list(daily_progress.reviewed_cards or [])
 
-    # 4️⃣ Mapear usando Pydantic v2
-    todays_cards = [CardResponse.model_validate(c) for c in cards_db]
-    reviewed_cards = [
-        CardResponse.model_validate(c)
-        for c in cards_db
-        if c.id in daily_progress.reviewed_cards
-    ]
+    # Dedupe y construir la lista total de ids a buscar para minimizar consultas
+    all_ids = list(dict.fromkeys(todays_ids + reviewed_ids))
+
+    if all_ids:
+        cards_fetched = db.query(CardDB).filter(CardDB.id.in_(all_ids)).all()
+    else:
+        cards_fetched = []
+
+    # Map id -> DB row
+    id_to_card = {c.id: c for c in cards_fetched}
+
+    # Reconstruir listas EN EL ORDEN EXACTO de daily_progress
+    todays_cards = [CardResponse.model_validate(id_to_card[i]) for i in todays_ids if i in id_to_card]
+    reviewed_cards = [CardResponse.model_validate(id_to_card[i]) for i in reviewed_ids if i in id_to_card]
 
     # 5️⃣ Devolver respuesta
     return TodayCardsResponse(
         todays_cards=todays_cards,
         reviewed_cards=reviewed_cards,
         kanji_count=daily_progress.kanji_count,
-        reviewed_count=len(daily_progress.reviewed_cards),
+        reviewed_count=len(daily_progress.reviewed_cards or []),
         completed=daily_progress.completed,
     )
+
+
+
+
+def increase_daily_kanji(db: Session, user_id: UUID, add_count: int):
+    if add_count <= 0:
+        raise HTTPException(status_code=400, detail="add_count must be > 0")
+
+    user_tz = get_user_timezone(db, user_id)
+    today = to_user_timezone(datetime.now(), user_tz).date()
+
+    # 1) Buscar todos los progresos del usuario
+    progresses = (
+        db.query(DailyFSRSProgress)
+        .filter(DailyFSRSProgress.user_id == user_id)
+        .all()
+    )
+
+    # Si NO existe ninguno → crear uno nuevo para hoy
+    if not progresses:
+        daily_progress = DailyFSRSProgress(
+            user_id=user_id,
+            progress_date=today,
+            kanji_count=0,
+            todays_cards=[],
+            reviewed_cards=[],
+            completed=False,
+        )
+        db.add(daily_progress)
+        db.commit()
+        db.refresh(daily_progress)
+    else:
+        # Elegir el registro con fecha más cercana a hoy (defensivo)
+        def days_diff(p: DailyFSRSProgress) -> int:
+            pd = getattr(p, "progress_date", None)
+            try:
+                return abs(pd.toordinal() - today.toordinal())
+            except Exception:
+                # Si algo raro ocurre (None u otro tipo), devolver un número grande
+                return 10 ** 6
+
+        daily_progress = min(progresses, key=days_diff)
+
+    # 2) Marcar como no completado
+    daily_progress.completed = False
+
+    # 3) Normalizar listas (int, quitar None, dedupe)
+    def normalize(xs):
+        out = []
+        for x in (xs or []):
+            try:
+                if x is None:
+                    continue
+                out.append(int(x))
+            except Exception:
+                continue
+        return list(dict.fromkeys(out))
+
+    todays = normalize(daily_progress.todays_cards)
+    reviewed = normalize(daily_progress.reviewed_cards)
+
+    set_todays = set(todays)
+    set_reviewed = set(reviewed)
+
+    # 4) Obtener TODOS los cards del usuario en orden determinista:
+    #    due NOT NULL first, then due asc, then created_at asc
+    all_cards = (
+        db.query(CardDB.id)
+        .filter(CardDB.user_id == user_id)
+        .order_by(
+            CardDB.due.is_(None),  # False (has due) first, True (no due) last
+            CardDB.due,
+            CardDB.created_at,
+        )
+        .all()
+    )
+    # all_cards items son tuplas como (id,), por eso r[0]
+    all_ids = [int(r[0]) for r in all_cards]
+
+    # 5) Candidatos nuevos (no en todays, no en reviewed)
+    candidates = [cid for cid in all_ids if cid not in set_todays and cid not in set_reviewed]
+
+    to_add = []
+
+    # 6) Primero intentar llenar con candidatos nuevos
+    take_cand = min(add_count, len(candidates))
+    if take_cand > 0:
+        to_add.extend(candidates[:take_cand])
+
+    remaining = add_count - len(to_add)
+
+    # 7) Si faltan -> tomar desde reviewed_cards (solo en este caso)
+    if remaining > 0 and reviewed:
+        take_from_rev = min(remaining, len(reviewed))
+        if take_from_rev > 0:
+            moved = reviewed[:take_from_rev]
+            to_add.extend(moved)
+            reviewed = reviewed[take_from_rev:]  # remover los usados
+
+    # 8) Añadir a todays_cards sin duplicar
+    for cid in to_add:
+        if cid not in set_todays:
+            todays.append(cid)
+            set_todays.add(cid)
+
+    # 9) Limpieza final: dedupe y asegurar disjointness
+    todays = [x for x in dict.fromkeys(todays)]
+    reviewed = [x for x in dict.fromkeys(reviewed)]
+    todays = [x for x in todays if x not in set(reviewed)]
+
+    # 10) Recalcular contadores
+    reviewed_count = len(reviewed)
+    kanji_count = max(daily_progress.kanji_count or 0, len(todays) + len(reviewed))
+
+    # 11) Persistir cambios
+    daily_progress.todays_cards = todays
+    daily_progress.reviewed_cards = reviewed
+    daily_progress.reviewed_count = reviewed_count
+    daily_progress.kanji_count = kanji_count
+    daily_progress.completed = False
+
+    db.add(daily_progress)
+    db.commit()
+    db.refresh(daily_progress)
