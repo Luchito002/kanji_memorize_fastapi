@@ -35,7 +35,6 @@ def generate_story(story: UserGenerateStoryRequest, db: Session, user_id: UUID) 
             []
         )
 
-    # IDs reales según tu tabla de user_preferences_questions
     topic_options = get_options(1)
     situation_options = get_options(3)
     gender_options = get_options(4)
